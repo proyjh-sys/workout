@@ -1,6 +1,6 @@
 // 백업(JSON) · 복원 · CSV 내보내기
 import { db, TABLES, SCHEMA_VERSION, useLive, setSetting } from './db.js';
-import { todayStr, toDateStr, daysBetween, nowIso, partLabel, cardioLabel, rpeLabel } from './util.js';
+import { todayStr, toDateStr, daysBetween, nowIso, partLabel, cardioLabel, rpeLabel, toUnit } from './util.js';
 import { toast } from './ui.js';
 
 export const APP_ID = 'workout-log';
@@ -116,21 +116,31 @@ export async function exportCSV() {
   const cardio = await db.cardio.toArray();
   const wmap = Object.fromEntries(workouts.map((w) => [w.id, w]));
 
-  const head = ['날짜', '종류', '운동', '부위', '세트', '무게(kg)', '횟수', 'RPE', '강도', '시간(분)', '거리(km)', '평균심박', '칼로리', '메모'];
+  const head = ['날짜', '종류', '운동', '부위', '세트', '무게(kg)', '입력 무게', '단위', '횟수', 'RPE', '강도',
+    '시간(분)', '거리(km)', '평균심박', '칼로리', '체중(kg)', '허리(cm)', 'BMI', '수면(1~5)', '피로(1~5)', '통증', '메모'];
+  const blank = (n) => Array(n).fill('');
   const rows = [];
   for (const s of sets.filter((s) => s.done)) {
     const ex = exercises[s.exerciseId];
+    const u = s.unit || 'kg';
     rows.push({
-      sort: s.date + (wmap[s.workoutId]?.startedAt || '') + String(entries[s.entryId]?.order ?? 0).padStart(3, '0') + String(s.order).padStart(3, '0'),
-      cells: [s.date, '근력', ex?.name, ex ? partLabel(ex.part) : '', s.order + 1, s.weightKg,
-        s.reps + (ex?.repUnit === 'sec' ? '초' : ''), s.rpe, rpeLabel(s.rpe), '', '', '', '', entries[s.entryId]?.note],
+      sort: s.date + '1' + (wmap[s.workoutId]?.startedAt || '') + String(entries[s.entryId]?.order ?? 0).padStart(3, '0') + String(s.order).padStart(3, '0'),
+      cells: [s.date, '근력', ex?.name, ex ? partLabel(ex.part) : '', s.order + 1, Math.round(s.weightKg * 100) / 100, toUnit(s.weightKg, u), u,
+        s.reps + (ex?.repUnit === 'sec' ? '초' : ''), s.rpe, rpeLabel(s.rpe), ...blank(10), entries[s.entryId]?.note],
     });
   }
   for (const c of cardio) {
     rows.push({
-      sort: c.date + (wmap[c.workoutId]?.startedAt || ''),
-      cells: [c.date, '유산소', cardioLabel(c.kind), '', '', '', '', c.rpe, rpeLabel(c.rpe), c.durationMin, c.distanceKm, c.avgHr, c.kcal, c.note],
+      sort: c.date + '1' + (wmap[c.workoutId]?.startedAt || ''),
+      cells: [c.date, '유산소', cardioLabel(c.kind), '', '', '', '', '', '', c.rpe, rpeLabel(c.rpe), c.durationMin, c.distanceKm, c.avgHr, c.kcal, ...blank(6), c.note],
     });
+  }
+  for (const b of await db.body.toArray()) {
+    rows.push({ sort: b.date + '0', cells: [b.date, '신체', ...blank(13), b.weightKg ?? '', b.waistCm ?? '', b.bmi ?? '', '', '', '', ''] });
+  }
+  for (const c of await db.conditions.toArray()) {
+    const pains = (c.pains || []).map((p) => `${p.part}(${['', '약함', '중간', '심함'][p.level]})`).join(' ');
+    rows.push({ sort: c.date + '0', cells: [c.date, '컨디션', ...blank(16), c.sleep ?? '', c.fatigue ?? '', pains, c.note ?? ''] });
   }
   rows.sort((a, b) => a.sort.localeCompare(b.sort));
   const csv = '﻿' + [head, ...rows.map((r) => r.cells)].map((r) => r.map(esc).join(',')).join('\n');

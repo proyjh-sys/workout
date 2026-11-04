@@ -2,7 +2,7 @@
 import { html, useState } from '../vendor/preact-htm.mjs';
 import {
   db, useLive, useExercises, addEntry, addSet, updateSet, deleteSet, updateEntry, deleteEntry,
-  getLastPerformance, touchWorkout, deleteWorkout, getSetting,
+  getLastPerformance, touchWorkout, deleteWorkout, getSetting, updateExercise,
 } from '../db.js';
 import { back, openSheet, confirmDialog, toast, useWakeLock } from '../ui.js';
 import { Stepper, TopBar, repUnitLabel } from '../components.js';
@@ -10,7 +10,10 @@ import { ExercisePicker } from './exercisePicker.js';
 import { RoutinePickerSheet, saveWorkoutAsRoutine } from './routines.js';
 import { RestBar, startRest, unlockAudio } from '../timer.js';
 import { progressionFor, checkPR } from '../progress.js';
-import { INTENSITY, fmtDate, fmtShort, fmtWeight, fmtNum, rpeLabel, partLabel, nowIso, vibrate, todayStr } from '../util.js';
+import {
+  INTENSITY, fmtDate, fmtShort, fmtWeight, fmtSetWeight, fmtNum, rpeLabel, partLabel, nowIso, vibrate, todayStr,
+  toUnit, fromUnit, convertRounded,
+} from '../util.js';
 
 export function StrengthView({ workoutId }) {
   useWakeLock();
@@ -108,10 +111,12 @@ function EntryCard({ entry, ex, sets, workout }) {
 
   const accept = async () => {
     vibrate();
-    for (const s of sets.filter((s) => !s.done && s.weightKg < sugg.toKg)) await updateSet(s.id, { weightKg: sugg.toKg });
-    await updateEntry(entry.id, { progression: { status: 'accepted', toKg: sugg.toKg } });
+    for (const s of sets.filter((s) => !s.done && s.weightKg < sugg.toKg - 0.01)) {
+      await updateSet(s.id, { weightKg: sugg.toKg, unit: sugg.unit });
+    }
+    await updateEntry(entry.id, { progression: { status: 'accepted', toKg: sugg.toKg, unit: sugg.unit } });
   };
-  const ignore = () => updateEntry(entry.id, { progression: { status: 'ignored', toKg: sugg.toKg } });
+  const ignore = () => updateEntry(entry.id, { progression: { status: 'ignored', toKg: sugg.toKg, unit: sugg.unit } });
   const showSugg = sugg && !entry.progression && firstPending;
 
   return html`
@@ -121,7 +126,7 @@ function EntryCard({ entry, ex, sets, workout }) {
           <div class="entry-name">${ex?.name ?? '(삭제된 운동)'}</div>
           <div class="entry-last">
             ${last
-              ? html`지난번 ${fmtShort(last.date)} · ${last.sets.map((s) => `${fmtWeight(s.weightKg)}×${fmtNum(s.reps)}`).join(', ')}`
+              ? html`지난번 ${fmtShort(last.date)} · ${last.sets.map((s) => `${fmtSetWeight(s)}×${fmtNum(s.reps)}`).join(', ')}`
               : html`<span class="muted">${ex ? partLabel(ex.part) + ' · ' : ''}첫 기록이에요</span>`}
           </div>
           ${entry.targetSets && html`
@@ -132,22 +137,23 @@ function EntryCard({ entry, ex, sets, workout }) {
 
       ${showSugg && html`
         <div class="suggest-box">
-          <div class="sb-text">💡 지난번 모든 세트 ${sugg.target}${unit} 달성! 오늘 <b>${fmtNum(sugg.toKg)}kg</b> 해볼까요?</div>
+          <div class="sb-text">💡 지난번 모든 세트 ${sugg.target}${unit} 달성! 오늘 <b>${fmtWeight(sugg.toKg, sugg.unit)}</b> 해볼까요?</div>
           <div class="sb-actions">
             <button class="btn primary small" onClick=${accept}>수락</button>
             <button class="btn small" onClick=${ignore}>무시</button>
           </div>
         </div>`}
-      ${entry.progression?.status === 'accepted' && html`<div class="sb-done">⬆ 증량 적용: ${fmtNum(entry.progression.toKg)}kg</div>`}
+      ${entry.progression?.status === 'accepted' && html`<div class="sb-done">⬆ 증량 적용: ${fmtWeight(entry.progression.toKg, entry.progression.unit || 'kg')}</div>`}
 
       <div class="sets">
         ${sets.map((s, i) =>
           s.id === activeId
-            ? html`<${SetEditor} key=${s.id} s=${s} index=${i} ex=${ex} onClose=${() => setEditingId(null)} canClose=${s.done} />`
+            ? html`<${SetEditor} key=${s.id} s=${s} index=${i} ex=${ex} onClose=${() => setEditingId(null)} canClose=${s.done}
+                pending=${sets.filter((x) => !x.done && x.id !== s.id)} />`
             : html`
               <button key=${s.id} class=${'set-row ' + (s.done ? 'done' : 'pending')} onClick=${() => setEditingId(s.id)}>
                 <span class="set-no">${i + 1}</span>
-                <span class="set-main">${fmtWeight(s.weightKg)} × ${fmtNum(s.reps)}${unit}</span>
+                <span class="set-main">${fmtSetWeight(s)} × ${fmtNum(s.reps)}${unit}</span>
                 <span class="set-rpe">${s.done ? (s.rpe ? rpeLabel(s.rpe) : '') + ' ✓' : '대기'}</span>
               </button>`)}
       </div>
@@ -162,9 +168,20 @@ function EntryCard({ entry, ex, sets, workout }) {
     </section>`;
 }
 
-function SetEditor({ s, index, ex, onClose, canClose }) {
-  const step = ex?.incrementKg || 2.5;
+function SetEditor({ s, index, ex, onClose, canClose, pending = [] }) {
+  const u = s.unit || 'kg';
+  const step = u === 'lb' ? ex?.incrementLb || 5 : ex?.incrementKg || 2.5;
   const isSec = ex?.repUnit === 'sec';
+
+  // kg ↔ lb 전환: 이 세트와 아직 안 한 세트들을 같이 바꾸고, 운동에 단위를 기억
+  const switchUnit = async (nu) => {
+    if (nu === u) return;
+    vibrate();
+    for (const x of [s, ...pending]) {
+      await updateSet(x.id, { unit: nu, weightKg: fromUnit(convertRounded(x.weightKg, nu), nu) });
+    }
+    if (ex) await updateExercise(ex.id, { unit: nu });
+  };
 
   const complete = async (rpe) => {
     vibrate();
@@ -185,11 +202,16 @@ function SetEditor({ s, index, ex, onClose, canClose }) {
     <div class="set-editor">
       <div class="se-head">
         <span class="set-no big">${index + 1}세트</span>
-        <span class="muted small">${s.done ? '수정 중' : '강도를 누르면 세트 완료'}</span>
+        <span class="muted small">${s.done ? '수정 중' : '강도를 누르면 완료'}</span>
+        <div class="unit-toggle" role="group" aria-label="무게 단위">
+          <button class=${u === 'kg' ? 'on' : ''} onClick=${() => switchUnit('kg')}>kg</button>
+          <button class=${u === 'lb' ? 'on' : ''} onClick=${() => switchUnit('lb')}>lb</button>
+        </div>
       </div>
       <div class="se-steppers">
-        <${Stepper} label="무게" value=${s.weightKg} step=${step} unit="kg" display=${fmtWeight}
-          onChange=${(v) => updateSet(s.id, { weightKg: v })} />
+        <${Stepper} label=${`무게 (${u})`} value=${toUnit(s.weightKg, u)} step=${step} unit=${u}
+          display=${(v) => (Number(v) === 0 ? '맨몸' : `${fmtNum(v)}${u}`)}
+          onChange=${(v) => updateSet(s.id, { weightKg: fromUnit(v, u) })} />
         <${Stepper} label=${isSec ? '시간' : '횟수'} value=${s.reps} step=${isSec ? 5 : 1} unit=${isSec ? '초' : '회'}
           decimal=${false} display=${(v) => `${fmtNum(v)}${isSec ? '초' : '회'}`}
           onChange=${(v) => updateSet(s.id, { reps: Math.round(v) })} />

@@ -1,8 +1,9 @@
 // ③ 통계 탭: 주간 운동량, 부위별 세트, 운동별 추이, 개인 최고 기록
 import { html, useState, useEffect, useRef } from '../vendor/preact-htm.mjs';
-import { db, useLive, useExercises } from '../db.js';
+import { db, useLive, useExercises, getSetting } from '../db.js';
 import { epley, round1 } from '../progress.js';
-import { todayStr, addDays, parseDate, toDateStr, fmtShort, fmtNum, PARTS, partLabel } from '../util.js';
+import { bmiLabel, bmiKind } from './daily.js';
+import { todayStr, addDays, parseDate, toDateStr, fmtShort, fmtNum, PARTS, partLabel, toUnit, fmtSetWeight } from '../util.js';
 
 const PERIODS = [
   { id: '4w', label: '4주', days: 28 },
@@ -86,8 +87,39 @@ async function loadStats(from, to) {
   const exCount = {};
   for (const s of sets) exCount[s.exerciseId] = (exCount[s.exerciseId] || 0) + 1;
 
+  // 신체: 주마다 마지막으로 잰 값 (운동량 그래프와 같은 주 단위로 비교)
+  const body = (await db.body.where('date').between(from, to, true, true).toArray()).sort((a, b) => a.date.localeCompare(b.date));
+  const bodyWk = Object.fromEntries(weeks.map((w) => [w, { weightKg: null, waistCm: null, bmi: null }]));
+  for (const b of body) {
+    const k = mondayOf(b.date);
+    if (!bodyWk[k]) continue;
+    if (b.weightKg != null) bodyWk[k].weightKg = b.weightKg;
+    if (b.waistCm != null) bodyWk[k].waistCm = b.waistCm;
+    if (b.bmi != null) bodyWk[k].bmi = b.bmi;
+  }
+
+  // 컨디션과 운동 강도: 날짜별
+  const conds = await db.conditions.where('date').between(from, to, true, true).toArray();
+  const daily = {};
+  const day = (d) => (daily[d] ||= { date: d, rpes: [], sleep: null, fatigue: null, pain: 0 });
+  for (const s of sets) if (s.rpe) day(s.date).rpes.push(s.rpe);
+  for (const c of cardio) if (c.rpe) day(c.date).rpes.push(c.rpe);
+  for (const c of conds) {
+    const d = day(c.date);
+    d.sleep = c.sleep ?? null; d.fatigue = c.fatigue ?? null;
+    d.pain = (c.pains || []).reduce((m, p) => Math.max(m, p.level), 0);
+  }
+  const dailyList = Object.values(daily).sort((a, b) => a.date.localeCompare(b.date))
+    .map((d) => ({ ...d, rpe: d.rpes.length ? Math.round((d.rpes.reduce((a, b) => a + b, 0) / d.rpes.length) * 10) / 10 : null }));
+
+  // BMI: 직접 입력한 값만 사용
+  const bmis = body.filter((b) => b.bmi != null);
+  const lastBmi = bmis[bmis.length - 1] ?? null;
+  const firstBmi = bmis[0] ?? null;
+
   return {
-    weeks, wk, byPart, exCount, sets,
+    weeks, wk, byPart, exCount, sets, bodyWk, hasBody: body.length > 0, dailyList, hasCond: conds.length > 0,
+    lastBmi, firstBmi, hasBmi: bmis.length > 0,
     totals: {
       strength: Object.values(wk).reduce((n, v) => n + v.strength, 0),
       sets: sets.length,
@@ -120,6 +152,7 @@ export function StatsView() {
 
   const s = useLive(() => loadStats(from, today), [from, today]);
   const exMap = useExercises();
+  const unit = useLive(() => getSetting('defaultUnit', 'kg'), [], 'kg');
 
   return html`
     <div class="page">
@@ -139,7 +172,9 @@ export function StatsView() {
 
         <${WeeklyCharts} s=${s} key=${from} />
         <${PartChart} s=${s} key=${'p' + from} />
-        <${ExerciseTrend} s=${s} exMap=${exMap} />
+        <${ExerciseTrend} s=${s} exMap=${exMap} unit=${unit} />
+        <${BodyChart} s=${s} key=${'b' + from} />
+        <${CondChart} s=${s} key=${'c' + from} />
       `}
       <${PRList} exMap=${exMap} />
     </div>`;
@@ -190,7 +225,7 @@ function PartChart({ s }) {
     </div>`;
 }
 
-function ExerciseTrend({ s, exMap }) {
+function ExerciseTrend({ s, exMap, unit = 'kg' }) {
   const ids = Object.keys(s.exCount).sort((a, b) => s.exCount[b] - s.exCount[a]);
   const [exId, setExRaw] = useState(rememberedEx && ids.includes(rememberedEx) ? rememberedEx : ids[0]);
   const [metric, setMetric] = useState('e1rm');
@@ -200,14 +235,16 @@ function ExerciseTrend({ s, exMap }) {
   if (!ids.length) return html`<h2 class="section-title">운동별 추이</h2><div class="empty">이 기간에 근력 기록이 없어요</div>`;
 
   const ex = exMap[cur];
+  const wu = ex?.unit || unit;
   const series = exerciseSeries(s.sets.filter((x) => x.exerciseId === cur));
   const bodyweight = series.every((d) => d.maxW === 0);
   const sec = ex?.repUnit === 'sec';
   const metrics = bodyweight
     ? [{ id: 'maxReps', label: sec ? '최고 시간' : '최고 횟수', unit: sec ? '초' : '회' }, { id: 'reps', label: sec ? '총 시간' : '총 횟수', unit: sec ? '초' : '회' }]
-    : [{ id: 'maxW', label: '최고 무게', unit: 'kg' }, { id: 'e1rm', label: '추정 1RM', unit: 'kg' }, { id: 'volume', label: '볼륨', unit: 'kg' }];
+    : [{ id: 'maxW', label: '최고 무게', unit: wu }, { id: 'e1rm', label: '추정 1RM', unit: wu }, { id: 'volume', label: '볼륨', unit: wu }];
   const m = metrics.find((x) => x.id === metric) ?? metrics[0];
-  const values = series.map((d) => round1(d[m.id]));
+  // 무게 값은 이 운동의 단위(없으면 기본 단위)로 바꿔서 표시
+  const values = series.map((d) => round1(bodyweight ? d[m.id] : toUnit(d[m.id], wu)));
 
   return html`
     <h2 class="section-title">운동별 추이</h2>
@@ -243,7 +280,7 @@ function PRList({ exMap }) {
       const b = (best[s.exerciseId] ||= { maxW: -1, maxWDate: '', maxWReps: 0, e1rm: 0, e1rmDate: '', maxReps: 0, maxRepsDate: '', n: 0 });
       b.n++;
       const w = s.weightKg || 0;
-      if (w > b.maxW || (w === b.maxW && s.reps > b.maxWReps)) { b.maxW = w; b.maxWDate = s.date; b.maxWReps = s.reps; }
+      if (w > b.maxW || (w === b.maxW && s.reps > b.maxWReps)) { b.maxW = w; b.maxWDate = s.date; b.maxWReps = s.reps; b.unit = s.unit || 'kg'; }
       const e = epley(w, s.reps);
       if (e > b.e1rm) { b.e1rm = e; b.e1rmDate = s.date; }
       if (!w && s.reps > b.maxReps) { b.maxReps = s.reps; b.maxRepsDate = s.date; }
@@ -268,11 +305,85 @@ function PRList({ exMap }) {
               <div class="pr-vals">
                 ${b.maxW > 0
                   ? html`
-                    <div><b>${fmtNum(b.maxW)}kg</b> × ${b.maxWReps}${u} <span class="muted small">${fmtShort(b.maxWDate)}</span></div>
-                    <div class="muted small">1RM 추정 ${fmtNum(round1(b.e1rm))}kg</div>`
+                    <div><b>${fmtSetWeight({ weightKg: b.maxW, unit: b.unit })}</b> × ${b.maxWReps}${u} <span class="muted small">${fmtShort(b.maxWDate)}</span></div>
+                    <div class="muted small">1RM 추정 ${fmtNum(round1(toUnit(b.e1rm, b.unit)))}${b.unit}</div>`
                   : html`<div><b>${b.maxReps}${u}</b> <span class="muted small">${fmtShort(b.maxRepsDate)}</span></div>`}
               </div>
             </div>`;
         })}
       </div>`}`;
+}
+
+/** 신체 변화: 운동량 그래프와 같은 주 단위 */
+function BodyChart({ s }) {
+  if (!s.hasBody) return html`
+    <h2 class="section-title">신체 변화</h2>
+    <div class="empty">오늘 탭 → '컨디션 · 체중 기록'에서 체중·허리둘레를 입력하면 여기에 그래프가 생겨요</div>`;
+  const labels = s.weeks.map(fmtShort);
+  return html`
+    <h2 class="section-title">신체 변화 (주별 마지막 측정값)</h2>
+    <div class="card">
+      <${ChartBox} deps=${[s]} build=${() => ({
+        type: 'line',
+        data: {
+          labels,
+          datasets: [
+            { label: '체중(kg)', data: s.weeks.map((w) => s.bodyWk[w].weightKg), borderColor: css('--accent'), backgroundColor: css('--accent'), yAxisID: 'y', spanGaps: true, tension: 0.25, pointRadius: 4 },
+            { label: '허리(cm)', data: s.weeks.map((w) => s.bodyWk[w].waistCm), borderColor: css('--cardio'), backgroundColor: css('--cardio'), yAxisID: 'y1', spanGaps: true, tension: 0.25, pointRadius: 4 },
+          ],
+        },
+        options: baseOpts({
+          plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 10 } } },
+          scales: {
+            x: { grid: { display: false } },
+            y: { position: 'left', title: { display: true, text: 'kg' } },
+            y1: { position: 'right', grid: { display: false }, title: { display: true, text: 'cm' } },
+          },
+        }),
+      })} />
+      <p class="hint">위의 주간 운동 그래프와 같은 주 단위라 함께 비교할 수 있어요.</p>
+      ${s.hasBmi && html`
+        <div class="field-label">BMI (직접 입력한 값)</div>
+        <${ChartBox} deps=${[s]} height=${150} build=${() => ({
+          type: 'line',
+          data: { labels, datasets: [{ label: 'BMI', data: s.weeks.map((w) => s.bodyWk[w].bmi), borderColor: css('--warn-text'), backgroundColor: css('--warn-text'), spanGaps: true, tension: 0.25, pointRadius: 4 }] },
+          options: baseOpts({ scales: { x: { grid: { display: false } } } }),
+        })} />
+        <div class="bmi-row">
+          <span class=${'bmi-badge ' + bmiKind(s.lastBmi.bmi)}>최근 BMI <b>${fmtNum(s.lastBmi.bmi)}</b> · ${bmiLabel(s.lastBmi.bmi)}</span>
+          ${s.firstBmi !== s.lastBmi && html`<span class="muted small">기간 시작 ${fmtNum(s.firstBmi.bmi)} → 지금 ${fmtNum(s.lastBmi.bmi)}</span>`}
+        </div>`}
+    </div>`;
+}
+
+/** 컨디션과 운동 강도: 날짜별 평균 RPE(막대) + 수면·피로도(선) */
+function CondChart({ s }) {
+  const list = s.dailyList;
+  if (!s.hasCond || !list.length) return html`
+    <h2 class="section-title">컨디션과 운동 강도</h2>
+    <div class="empty">수면·피로도를 입력하면 운동 강도와 함께 볼 수 있어요</div>`;
+  return html`
+    <h2 class="section-title">컨디션과 운동 강도</h2>
+    <div class="card">
+      <${ChartBox} deps=${[s]} height=${220} build=${() => ({
+        data: {
+          labels: list.map((d) => fmtShort(d.date)),
+          datasets: [
+            { type: 'bar', label: '강도(RPE)', data: list.map((d) => d.rpe), backgroundColor: css('--accent-soft'), borderColor: css('--accent'), borderWidth: 1, borderRadius: 4, yAxisID: 'y' },
+            { type: 'line', label: '수면(1~5)', data: list.map((d) => d.sleep), borderColor: css('--cardio'), backgroundColor: css('--cardio'), yAxisID: 'y1', spanGaps: true, pointRadius: 3, tension: 0.2 },
+            { type: 'line', label: '피로(1~5)', data: list.map((d) => d.fatigue), borderColor: css('--danger'), backgroundColor: css('--danger'), yAxisID: 'y1', spanGaps: true, pointRadius: 3, tension: 0.2 },
+          ],
+        },
+        options: baseOpts({
+          plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 10 } } },
+          scales: {
+            x: { grid: { display: false } },
+            y: { min: 0, max: 10, position: 'left', title: { display: true, text: 'RPE' } },
+            y1: { min: 0, max: 5, position: 'right', grid: { display: false }, ticks: { stepSize: 1 } },
+          },
+        }),
+      })} />
+      ${list.some((d) => d.pain) && html`
+        <p class="hint">통증 기록한 날: ${list.filter((d) => d.pain).map((d) => `${fmtShort(d.date)}(${['', '약함', '중간', '심함'][d.pain]})`).join(', ')}</p>`}
+    </div>`;
 }

@@ -1,6 +1,7 @@
 // 증량 제안, 개인 최고 기록(PR), 추정 1RM 계산
 import Dexie from './vendor/dexie.mjs';
 import { db, getLastPerformance } from './db.js';
+import { toUnit, fromUnit, fmtWeight, fmtNum } from './util.js';
 
 /** Epley 공식: 1RM = 무게 × (1 + 횟수/30) */
 export function epley(weightKg, reps) {
@@ -27,11 +28,18 @@ export async function progressionFor(entry, ex, workout) {
   const targetSets = lastEntry?.targetSets ?? 0;
   const sets = last.sets;
   if (sets.length < targetSets) return null;
-  const top = Math.max(...sets.map((s) => s.weightKg || 0));
+  const topSet = sets.reduce((a, b) => ((b.weightKg || 0) > (a.weightKg || 0) ? b : a));
+  const top = topSet.weightKg || 0;
   if (top <= 0) return null; // 맨몸 운동은 제안하지 않음
   if (!sets.every((s) => s.reps >= target)) return null;
-  const inc = ex.incrementKg || 2.5;
-  return { fromKg: top, toKg: roundTo(top + inc, 0.25), target, lastDate: last.date };
+  // 지난번에 쓴 단위 기준으로 증량 (kg는 증량 폭, lb는 lb 증량 폭)
+  const unit = topSet.unit || 'kg';
+  if (unit === 'lb') {
+    const toLb = roundTo(toUnit(top, 'lb') + (ex.incrementLb || 5), 0.5);
+    return { fromKg: top, toKg: fromUnit(toLb, 'lb'), toValue: toLb, unit, target, lastDate: last.date };
+  }
+  const toKg = roundTo(top + (ex.incrementKg || 2.5), 0.25);
+  return { fromKg: top, toKg, toValue: toKg, unit, target, lastDate: last.date };
 }
 
 /** 세트 완료 시 개인 최고 기록인지 확인 (첫 기록은 제외) */
@@ -46,10 +54,11 @@ export async function checkPR(set, ex) {
   const name = ex?.name ?? '';
   if ((set.weightKg || 0) > 0) {
     const maxW = Math.max(...prev.map((s) => s.weightKg || 0));
-    if (set.weightKg > maxW) return { kind: '최고 무게', text: `${name} ${set.weightKg}kg` };
+    const u = set.unit || 'kg';
+    if (set.weightKg > maxW + 0.01) return { kind: '최고 무게', text: `${name} ${fmtWeight(set.weightKg, u)}` };
     const maxE = Math.max(...prev.map((s) => epley(s.weightKg, s.reps)));
     const e = epley(set.weightKg, set.reps);
-    if (e > maxE + 0.05) return { kind: '추정 1RM', text: `${name} ${round1(e)}kg` };
+    if (e > maxE + 0.05) return { kind: '추정 1RM', text: `${name} ${fmtNum(round1(toUnit(e, u)))}${u}` };
   } else {
     const bw = prev.filter((s) => !s.weightKg);
     if (!bw.length) return null;

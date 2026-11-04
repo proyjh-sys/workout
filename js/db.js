@@ -159,13 +159,17 @@ export async function addEntry(workout, exercise, opts = {}) {
   };
   const last = await getLastPerformance(exercise.id, workout.id, workout.date);
   const count = Math.max(1, opts.targetSets || 1);
+  // 단위: 이 운동에서 마지막으로 쓴 단위 → 지난 기록 단위 → 기본 단위 설정
+  const unit = exercise.unit || last?.sets[0]?.unit || (await getSetting('defaultUnit', 'kg'));
+  const startKg = exercise.defaultWeightKg ?? (unit === 'lb' ? 45 * 0.45359237 : 20);
   await db.transaction('rw', db.entries, db.sets, db.workouts, async () => {
     await db.entries.add(entry);
     for (let i = 0; i < count; i++) {
       const base = last?.sets[i] ?? last?.sets[last.sets.length - 1];
       await db.sets.add(newSet(entry, workout, i, {
-        weightKg: base ? base.weightKg : exercise.defaultWeightKg ?? 20,
+        weightKg: base ? base.weightKg : startKg,
         reps: opts.targetReps ?? (base ? base.reps : exercise.repUnit === 'sec' ? 30 : 10),
+        unit: base?.unit && !exercise.unit ? base.unit : unit,
       }));
     }
     await touchWorkout(workout.id);
@@ -173,11 +177,11 @@ export async function addEntry(workout, exercise, opts = {}) {
   return entry;
 }
 
-function newSet(entry, workout, order, { weightKg, reps }) {
+function newSet(entry, workout, order, { weightKg, reps, unit = 'kg' }) {
   const t = nowIso();
   return {
     id: uuid(), workoutId: workout.id, entryId: entry.id, exerciseId: entry.exerciseId,
-    date: workout.date, order, weightKg, reps, rpe: null, done: false, completedAt: null,
+    date: workout.date, order, weightKg, unit, reps, rpe: null, done: false, completedAt: null,
     createdAt: t, updatedAt: t,
   };
 }
@@ -189,9 +193,9 @@ export async function addSet(entry, workout) {
   let base = prev;
   if (!base) {
     const last = await getLastPerformance(entry.exerciseId, workout.id, workout.date);
-    base = last?.sets[0] ?? { weightKg: 20, reps: 10 };
+    base = last?.sets[0] ?? { weightKg: 20, reps: 10, unit: 'kg' };
   }
-  const s = newSet(entry, workout, prev ? prev.order + 1 : 0, { weightKg: base.weightKg, reps: base.reps });
+  const s = newSet(entry, workout, prev ? prev.order + 1 : 0, { weightKg: base.weightKg, reps: base.reps, unit: base.unit || 'kg' });
   await db.sets.add(s);
   return s;
 }
@@ -258,4 +262,31 @@ export async function requestPersistence() {
       await navigator.storage.persist();
     }
   } catch {}
+}
+
+/* ---------- 신체(체중·허리) / 컨디션: 날짜마다 1개 ---------- */
+// 빠르게 연달아 눌러도 같은 날짜 기록이 두 개 생기지 않도록 하나의 저장 단위(트랜잭션)로 처리
+function upsertByDate(table, date, patch) {
+  return db.transaction('rw', table, async () => {
+    const t = nowIso();
+    const all = await table.where('date').equals(date).toArray();
+    const cur = all[0];
+    if (cur) {
+      // 예전에 중복으로 생긴 기록이 있으면 하나로 합침
+      const merged = Object.assign({}, ...all, patch, { id: cur.id, updatedAt: t });
+      await table.put(merged);
+      for (const x of all.slice(1)) await table.delete(x.id);
+      return cur.id;
+    }
+    const id = uuid();
+    await table.add({ id, date, ...patch, createdAt: t, updatedAt: t });
+    return id;
+  });
+}
+/** 체중(kg)·허리둘레(cm). 값이 null이면 비움 */
+export const saveBody = (date, patch) => upsertByDate(db.body, date, patch);
+/** 수면(1~5)·피로도(1~5)·통증 [{ part, level(1~3) }]·메모 */
+export const saveCondition = (date, patch) => upsertByDate(db.conditions, date, patch);
+export async function deleteByDate(table, date) {
+  await table.where('date').equals(date).delete();
 }

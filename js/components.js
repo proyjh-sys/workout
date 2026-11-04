@@ -1,7 +1,7 @@
 // 여러 화면에서 같이 쓰는 작은 부품들
 import { html } from './vendor/preact-htm.mjs';
 import { numberPrompt, back } from './ui.js';
-import { fmtNum, fmtWeight, rpeLabel, cardioLabel, partLabel, vibrate } from './util.js';
+import { fmtNum, fmtSetWeight, rpeLabel, cardioLabel, partLabel, vibrate } from './util.js';
 
 /** [-] 값 [+] 조절기. 가운데 숫자를 누르면 직접 입력 */
 export function Stepper({ value, step, min = 0, unit, label, onChange, display, decimal = true }) {
@@ -40,7 +40,7 @@ export function TopBar({ title, sub, onBack = back, backLabel = '‹ 뒤로', ri
 export const repUnitLabel = (ex) => (ex?.repUnit === 'sec' ? '초' : '회');
 
 export function setText(s, ex) {
-  return `${fmtWeight(s.weightKg)} × ${fmtNum(s.reps)}${repUnitLabel(ex)}`;
+  return `${fmtSetWeight(s)} × ${fmtNum(s.reps)}${repUnitLabel(ex)}`;
 }
 
 /** 운동 한 건 요약 카드 (오늘 탭, 기록 탭에서 사용) */

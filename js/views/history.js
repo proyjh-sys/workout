@@ -1,10 +1,13 @@
 // ② 기록 탭: 달력 + 날짜별 상세
 import { html, useState } from '../vendor/preact-htm.mjs';
-import { db, useLive, useExercises, loadWorkoutDetails, deleteWorkout, isEmptyWorkout } from '../db.js';
+import { db, useLive, useExercises, loadWorkoutDetails, deleteWorkout, isEmptyWorkout, getSetting } from '../db.js';
 import { confirmDialog, toast } from '../ui.js';
 import { WorkoutSummary } from '../components.js';
 import { startStrength, startCardio, openWorkout } from './today.js';
 import { saveWorkoutAsRoutine } from './routines.js';
+import { DailyFold } from './today.js';
+import { conditionText, bodyText } from './daily.js';
+import { rpeLabel } from '../util.js';
 import { todayStr, toDateStr, fmtDate } from '../util.js';
 
 const WEEK = ['월', '화', '수', '목', '금', '토', '일'];
@@ -85,6 +88,11 @@ export function HistoryView() {
 function DayDetail({ date }) {
   const exMap = useExercises();
   const list = useLive(async () => loadWorkoutDetails(await db.workouts.where('date').equals(date).toArray()), [date]);
+  const cond = useLive(async () => {
+    const c = await db.conditions.where('date').equals(date).first();
+    const b = await db.body.where('date').equals(date).first();
+    return [conditionText(c), bodyText(b)].filter(Boolean).join(' · ');
+  }, [date], '');
   const today = todayStr();
 
   const remove = async (w) => {
@@ -96,9 +104,19 @@ function DayDetail({ date }) {
     if (ok) { await deleteWorkout(w.id); toast('삭제했어요'); }
   };
 
+  // 그날 평균 강도(RPE): 근력 완료 세트 + 유산소 강도
+  const rpes = (list || []).flatMap((w) =>
+    w.type === 'strength' ? w.entries.flatMap((e) => e.sets.filter((s) => s.done && s.rpe).map((s) => s.rpe)) : w.cardio?.rpe ? [w.cardio.rpe] : []);
+  const avgRpe = rpes.length ? Math.round((rpes.reduce((a, b) => a + b, 0) / rpes.length) * 10) / 10 : null;
+
   return html`
     <h2 class="section-title">${fmtDate(date)}</h2>
-    ${list && list.length === 0 && html`<div class="empty">이 날은 기록이 없어요</div>`}
+    ${(avgRpe || cond) && html`
+      <div class="card day-cond">
+        ${avgRpe && html`<div>🔥 평균 강도 <b>RPE ${avgRpe}</b> <span class="muted small">(${rpeLabel(avgRpe)})</span></div>`}
+        ${cond && html`<div class="muted small">${cond}</div>`}
+      </div>`}
+    ${list && list.length === 0 && html`<div class="empty">이 날은 운동 기록이 없어요</div>`}
     ${list?.map((w) => html`
       <${WorkoutSummary} key=${w.id} w=${w} exMap=${exMap}>
         <div class="wc-actions">
@@ -111,5 +129,7 @@ function DayDetail({ date }) {
       <div class="add-past">
         <button class="btn" onClick=${() => startStrength(date)}>+ 근력 추가</button>
         <button class="btn" onClick=${() => startCardio(date)}>+ 유산소 추가</button>
-      </div>`}`;
+      </div>
+      <div class="spacer"></div>
+      <${DailyFold} date=${date} key=${date} />`}`;
 }

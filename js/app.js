@@ -9,6 +9,8 @@ import { SettingsView, ExercisesView } from './views/settings.js';
 import { StrengthView } from './views/strength.js';
 import { CardioView } from './views/cardio.js';
 import { RoutinesView, RoutineEditor } from './views/routines.js';
+import { GoalsView } from './views/goals.js';
+import { AIExportView } from './views/aiexport.js';
 
 const TABS = [
   { id: 'today', label: '오늘', icon: '<path d="M12 3v2M12 19v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M3 12h2M19 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/><circle cx="12" cy="12" r="4"/>' },
@@ -26,6 +28,8 @@ function App() {
   else if (r?.name === 'cardio') screen = html`<${CardioView} workoutId=${r.workoutId} date=${r.date} key=${r.workoutId || 'new' + r.date} />`;
   else if (r?.name === 'exercises') screen = html`<${ExercisesView} />`;
   else if (r?.name === 'routines') screen = html`<${RoutinesView} />`;
+  else if (r?.name === 'goals') screen = html`<${GoalsView} />`;
+  else if (r?.name === 'ai') screen = html`<${AIExportView} />`;
   else if (r?.name === 'routine') screen = html`<${RoutineEditor} id=${r.id} key=${r.id || 'new'} />`;
   else if (ui.tab === 'history') screen = html`<${HistoryView} />`;
   else if (ui.tab === 'stats') screen = html`<${StatsView} />`;

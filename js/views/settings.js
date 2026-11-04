@@ -56,8 +56,13 @@ export function SettingsView() {
         <button class="list-item" onClick=${() => go({ name: 'routines' })}>
           <span>루틴 템플릿</span><span class="chev">›</span>
         </button>
-        <div class="list-item disabled"><span>주간 목표</span><span class="muted small">3단계에서 추가</span></div>
+        <button class="list-item" onClick=${() => go({ name: 'goals' })}>
+          <span>주간 목표</span><span class="chev">›</span>
+        </button>
       </div>
+
+      <h2 class="section-title">무게 단위</h2>
+      <${UnitSettings} />
 
       <h2 class="section-title">휴식 타이머</h2>
       <${RestSettings} />
@@ -76,7 +81,9 @@ export function SettingsView() {
 
       <h2 class="section-title">AI 코치</h2>
       <div class="card list">
-        <div class="list-item disabled"><span>AI 분석용 내보내기</span><span class="muted small">3단계에서 추가</span></div>
+        <button class="list-item" onClick=${() => go({ name: 'ai' })}>
+          <span>AI 분석용 내보내기</span><span class="chev">›</span>
+        </button>
       </div>
 
       <h2 class="section-title">앱 정보</h2>
@@ -86,6 +93,19 @@ export function SettingsView() {
           <span class="muted small">${persisted === true ? '켜짐 ✓' : persisted === false ? '홈 화면 앱으로 쓰면 더 안전해요' : '-'}</span></div>
       </div>
       <p class="hint center">모든 기록은 이 아이폰 안에만 저장돼요.</p>
+    </div>`;
+}
+
+/* ---------- 기본 무게 단위 ---------- */
+function UnitSettings() {
+  const u = useLive(() => getSetting('defaultUnit', 'kg'), [], 'kg');
+  return html`
+    <div class="card">
+      <div class="choice-grid">
+        <button class=${'choice ' + (u === 'kg' ? 'on' : '')} onClick=${() => setSetting('defaultUnit', 'kg')}>kg</button>
+        <button class=${'choice ' + (u === 'lb' ? 'on' : '')} onClick=${() => setSetting('defaultUnit', 'lb')}>lb (파운드)</button>
+      </div>
+      <p class="hint">처음 하는 운동과 통계 그래프에 쓰는 단위예요. 기록할 때는 무게 옆 <b>kg | lb</b> 버튼으로 운동마다 바꿀 수 있고, 운동별로 마지막에 쓴 단위를 기억해요.</p>
     </div>`;
 }
 
@@ -158,6 +178,8 @@ function ExerciseEditor({ ex, part }) {
     name: ex?.name ?? '',
     part: ex?.part ?? part,
     incrementKg: ex?.incrementKg ?? 2.5,
+    incrementLb: ex?.incrementLb ?? 5,
+    unit: ex?.unit ?? null,
     repUnit: ex?.repUnit ?? 'reps',
     favorite: ex?.favorite ?? false,
     targetReps: ex?.targetReps ?? DEFAULT_TARGET_REPS,
@@ -170,7 +192,7 @@ function ExerciseEditor({ ex, part }) {
     if (ex) await updateExercise(ex.id, { ...f, name });
     else {
       const n = await addExercise({ ...f, name });
-      await updateExercise(n.id, { favorite: f.favorite, targetReps: f.targetReps });
+      await updateExercise(n.id, { favorite: f.favorite, targetReps: f.targetReps, incrementLb: f.incrementLb, unit: f.unit });
     }
     closeSheet();
     toast('저장했어요');
@@ -199,9 +221,18 @@ function ExerciseEditor({ ex, part }) {
       <div class="choice-grid three">
         ${PARTS.map((p) => html`<button class=${'choice ' + (f.part === p.id ? 'on' : '')} onClick=${() => up({ part: p.id })}>${p.label}</button>`)}
       </div>
+      <div class="field-label">이 운동의 무게 단위 (기구 표시에 맞추세요)</div>
+      <div class="choice-grid">
+        <button class=${'choice ' + ((f.unit || 'kg') === 'kg' ? 'on' : '')} onClick=${() => up({ unit: 'kg' })}>kg</button>
+        <button class=${'choice ' + (f.unit === 'lb' ? 'on' : '')} onClick=${() => up({ unit: 'lb' })}>lb</button>
+      </div>
       <div class="field-label">증량 폭 (증량 제안·무게 +/- 버튼 간격)</div>
-      <${Stepper} label="증량 폭" value=${f.incrementKg} step=${0.5} min=${0.5} unit="kg" display=${(v) => `${fmtNum(v)}kg`}
-        onChange=${(v) => up({ incrementKg: Math.max(0.5, v) })} />
+      <div class="two-col">
+        <${Stepper} label="증량 폭 (kg)" value=${f.incrementKg} step=${0.5} min=${0.5} unit="kg" display=${(v) => `${fmtNum(v)}kg`}
+          onChange=${(v) => up({ incrementKg: Math.max(0.5, v) })} />
+        <${Stepper} label="증량 폭 (lb)" value=${f.incrementLb} step=${2.5} min=${1} unit="lb" display=${(v) => `${fmtNum(v)}lb`}
+          onChange=${(v) => up({ incrementLb: Math.max(1, v) })} />
+      </div>
       ${f.repUnit === 'reps' && html`
         <div class="field-label">기본 목표 횟수 (루틴 없이 할 때 증량 제안 기준)</div>
         <${Stepper} label="기본 목표 횟수" value=${f.targetReps} step=${1} min=${1} decimal=${false} display=${(v) => `${v}회`}

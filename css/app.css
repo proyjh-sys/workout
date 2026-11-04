@@ -339,3 +339,57 @@ main.no-tabs { padding-bottom: calc(var(--safe-b) + 24px); }
 .pr-item { align-items: center; padding: 8px 0; }
 .pr-name { font-weight: 700; }
 .pr-vals { text-align: right; font-size: 15px; }
+
+/* ===== 3단계: kg/lb 전환 ===== */
+.se-head { gap: 8px; }
+.se-head .muted { flex: 1; text-align: right; }
+.unit-toggle { display: inline-flex; background: var(--card-2); border-radius: 10px; padding: 3px; }
+.unit-toggle button { min-width: 46px; min-height: 36px; border-radius: 8px; font-weight: 800; font-size: 15px; color: var(--muted); }
+.unit-toggle button.on { background: var(--accent); color: #fff; }
+
+/* ===== 3단계: 컨디션·체중 ===== */
+.fold-sum { padding: 0 2px 4px; }
+.daily .two-col .btn { min-height: 56px; }
+.small-link { font-size: 13px; padding: 4px 2px; }
+.scale5 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; }
+.s5 { min-height: 56px; border-radius: 12px; background: var(--card-2); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; }
+.s5 b { font-size: 17px; }
+.s5 span { font-size: 11px; color: var(--muted); font-weight: 600; line-height: 1.1; text-align: center; }
+.s5.on { background: var(--cardio); color: #fff; }
+.scale5.rev .s5.on { background: var(--danger); }
+.s5.on span { color: rgba(255, 255, 255, .9); }
+.pain-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.pain-chip { min-height: 44px; padding: 0 14px; border-radius: 99px; background: var(--card-2); font-weight: 700; font-size: 14px; }
+.pain-chip.lv1 { background: #fde9a8; color: #6b4b00; }
+.pain-chip.lv2 { background: #fbbf77; color: #5a2d00; }
+.pain-chip.lv3 { background: var(--danger); color: #fff; }
+.day-cond { display: flex; flex-direction: column; gap: 4px; }
+.spacer { height: 12px; }
+
+/* ===== 3단계: 주간 목표 ===== */
+.goal-card { cursor: pointer; }
+.goal-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+.section-inline { font-weight: 800; font-size: 15px; }
+.goal-pct { font-size: 22px; font-weight: 800; color: var(--accent); }
+.goal-row { margin-top: 8px; }
+.goal-top { display: flex; justify-content: space-between; font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+.goal-bar { height: 10px; border-radius: 99px; background: var(--card-2); overflow: hidden; }
+.goal-fill { height: 100%; border-radius: 99px; transition: width .3s; }
+.goal-fill.strength { background: var(--strength); }
+.goal-fill.cardio { background: var(--cardio); }
+
+/* ===== 3단계: AI 내보내기 ===== */
+.ai-preview { min-height: 320px; font-size: 13px; line-height: 1.5; font-family: ui-monospace, Menlo, monospace; }
+.big-btn:disabled { opacity: .5; }
+/* 통증 버튼: 폭이 바뀌지 않도록 5칸 고정 + 정도는 아랫줄 */
+.pain-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; }
+.pain-chip { min-height: 52px; padding: 0 2px; border-radius: 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.15; }
+.pain-chip b { font-size: 14px; }
+.pain-chip span { font-size: 11px; font-weight: 700; min-height: 13px; }
+/* BMI */
+.bmi-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+.bmi-badge { padding: 6px 12px; border-radius: 99px; font-size: 14px; font-weight: 600; background: var(--card-2); }
+.bmi-badge.ok { background: var(--cardio-soft); color: var(--cardio); }
+.bmi-badge.low, .bmi-badge.warn { background: var(--warn-bg); color: var(--warn-text); }
+.bmi-badge.high { background: #fde2e2; color: #b42318; }
+@media (prefers-color-scheme: dark) { .bmi-badge.high { background: #3b1717; color: #ff8a8a; } }

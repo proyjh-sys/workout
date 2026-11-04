@@ -51,9 +51,24 @@ export function fmtNum(n) {
   return String(Math.round(Number(n) * 100) / 100);
 }
 
-export function fmtWeight(kg) {
-  return Number(kg) === 0 ? '맨몸' : `${fmtNum(kg)}kg`;
+/* ---------- 무게 단위 (kg / lb) ----------
+ * 저장은 항상 weightKg(정확한 kg 값) + unit(입력한 단위)으로 합니다.
+ * 화면에는 입력한 단위로 보여 줍니다. */
+export const LB = 0.45359237;
+export const toUnit = (kg, unit) => (unit === 'lb' ? Math.round((kg / LB) * 100) / 100 : kg);
+export const fromUnit = (v, unit) => (unit === 'lb' ? v * LB : v);
+/** 단위를 바꿀 때: 같은 무게를 새 단위로 바꾸고 가까운 값(kg 0.5, lb 2.5)으로 맞춤 */
+export function convertRounded(kg, unit) {
+  const step = unit === 'lb' ? 2.5 : 0.5;
+  return Math.round(toUnit(kg, unit) / step) * step;
 }
+
+/** 무게 표시. unit을 주면 그 단위로 ('맨몸' 포함) */
+export function fmtWeight(kg, unit = 'kg') {
+  return Number(kg) === 0 ? '맨몸' : `${fmtNum(toUnit(Number(kg), unit))}${unit}`;
+}
+/** 세트 무게 표시 (세트에 저장된 단위로) */
+export const fmtSetWeight = (s) => fmtWeight(s.weightKg, s.unit || 'kg');
 
 export const PARTS = [
   { id: 'chest', label: '가슴' },

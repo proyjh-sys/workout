@@ -1,6 +1,7 @@
 // ① 오늘 탭
-import { html } from '../vendor/preact-htm.mjs';
-import { db, useLive, useExercises, createWorkout, lastWorkoutBefore, loadWorkoutDetails } from '../db.js';
+import { html, useState } from '../vendor/preact-htm.mjs';
+import { DailyPanel, WeeklyGoalCard, bodyText, conditionText } from './daily.js';
+import { db, useLive, useExercises, createWorkout, lastWorkoutBefore, loadWorkoutDetails, getSetting } from '../db.js';
 import { go, setTab } from '../ui.js';
 import { todayStr, fmtDate, daysBetween } from '../util.js';
 import { WorkoutSummary } from '../components.js';
@@ -67,8 +68,32 @@ export function TodayView() {
         </div>
       </section>
 
+      <${WeeklyGoalCard} />
+
       <h2 class="section-title">오늘의 기록</h2>
       ${todays.length === 0 && html`<div class="empty">아직 기록이 없어요</div>`}
       ${todays.map((w) => html`<${WorkoutSummary} key=${w.id} w=${w} exMap=${exMap} onClick=${() => openWorkout(w)} />`)}
+
+      <${DailyFold} date=${today} />
     </div>`;
+}
+
+let foldOpen = false;
+/** 접히는 '컨디션·체중' 영역. 입력하지 않아도 운동 기록에는 영향 없음 */
+export function DailyFold({ date }) {
+  const [open, setOpenRaw] = useState(foldOpen);
+  const setOpen = (v) => { foldOpen = v; setOpenRaw(v); };
+  const summary = useLive(async () => {
+    const b = await db.body.where('date').equals(date).first();
+    const c = await db.conditions.where('date').equals(date).first();
+    return [bodyText(b), conditionText(c)].filter(Boolean).join(' · ');
+  }, [date], '');
+  return html`
+    <section class="card">
+      <button class="fold-btn" onClick=${() => setOpen(!open)}>
+        ${open ? '▾' : '▸'} 컨디션 · 체중 기록 <span class="muted small">(선택)</span>
+      </button>
+      ${!open && summary && html`<div class="muted small fold-sum">${summary}</div>`}
+      ${open && html`<${DailyPanel} date=${date} />`}
+    </section>`;
 }
