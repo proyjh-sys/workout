@@ -1,6 +1,6 @@
 // 서비스 워커: 앱 파일을 기기에 저장해서 오프라인에서도 열리게 합니다.
 // ⚠️ 새 버전을 배포할 때마다 아래 숫자를 올려 주세요. (기록 데이터는 지워지지 않아요)
-const CACHE_VERSION = 'v1.0.0';
+const CACHE_VERSION = 'v1.1.0';
 const CACHE = `workout-log-${CACHE_VERSION}`;
 
 const FILES = [
@@ -23,6 +23,10 @@ const FILES = [
   './js/views/stats.js',
   './js/views/settings.js',
   './js/views/exercisePicker.js',
+  './js/views/routines.js',
+  './js/progress.js',
+  './js/timer.js',
+  './js/vendor/chart.umd.min.js',
   './js/vendor/preact-htm.mjs',
   './js/vendor/dexie.mjs',
   './icons/apple-touch-icon.png',

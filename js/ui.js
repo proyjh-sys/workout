@@ -25,9 +25,11 @@ export function useUI() {
 }
 
 /* ---------- 이동 ---------- */
-export const setTab = (tab) => { set({ tab, route: null }); window.scrollTo(0, 0); };
-export const go = (route) => { set({ route }); window.scrollTo(0, 0); };
-export const back = () => { set({ route: null }); window.scrollTo(0, 0); };
+// 화면을 열 때마다 이전 화면을 기억했다가 '뒤로'를 누르면 돌아갑니다.
+let stack = [];
+export const setTab = (tab) => { stack = []; set({ tab, route: null }); window.scrollTo(0, 0); };
+export const go = (route) => { if (state.route) stack.push(state.route); set({ route }); window.scrollTo(0, 0); };
+export const back = () => { set({ route: stack.pop() ?? null }); window.scrollTo(0, 0); };
 
 /* ---------- 토스트 ---------- */
 let toastTimer;
@@ -61,6 +63,18 @@ export function numberPrompt({ title, value, unit = '', decimal = true }) {
   });
 }
 
+/* ---------- 글자 입력창 ---------- */
+export function textPrompt({ title, value = '', placeholder = '' }) {
+  return new Promise((resolve) => {
+    set({
+      dialog: {
+        kind: 'text', title, value, placeholder,
+        done: (v) => { set({ dialog: null }); resolve(v); },
+      },
+    });
+  });
+}
+
 /* ---------- 아래에서 올라오는 시트 ---------- */
 export function openSheet(render) { set({ sheet: render }); }
 export function closeSheet() { set({ sheet: null }); }
@@ -70,7 +84,9 @@ function NumberDialog({ d }) {
   const [v, setV] = useState(d.value == null ? '' : String(d.value));
   const ref = useRef();
   useEffect(() => { setTimeout(() => { ref.current?.focus(); ref.current?.select(); }, 50); }, []);
+  const isText = d.kind === 'text';
   const ok = () => {
+    if (isText) return d.done(v.trim() || null);
     const n = parseFloat(v.replace(',', '.'));
     d.done(Number.isFinite(n) && n >= 0 ? n : null);
   };
@@ -78,7 +94,8 @@ function NumberDialog({ d }) {
     <div class="dialog">
       <div class="dialog-title">${d.title}</div>
       <div class="num-input-row">
-        <input ref=${ref} class="num-input" type="text" inputmode=${d.decimal ? 'decimal' : 'numeric'}
+        <input ref=${ref} class=${isText ? 'text-input full' : 'num-input'} type="text" placeholder=${d.placeholder || ''}
+          inputmode=${isText ? 'text' : d.decimal ? 'decimal' : 'numeric'}
           value=${v} onInput=${(e) => setV(e.target.value)}
           onKeyDown=${(e) => e.key === 'Enter' && ok()} />
         <span class="num-unit">${d.unit}</span>
@@ -101,8 +118,8 @@ export function Overlays() {
         ${s.sheet()}
       </div>`}
     ${d && html`
-      <div class="backdrop top" onClick=${() => d.done(d.kind === 'number' ? null : false)}></div>
-      ${d.kind === 'number'
+      <div class="backdrop top" onClick=${() => d.done(d.kind === 'number' || d.kind === 'text' ? null : false)}></div>
+      ${d.kind === 'number' || d.kind === 'text'
         ? html`<${NumberDialog} d=${d} key=${d.title} />`
         : html`
           <div class="dialog">

@@ -40,7 +40,7 @@ export function TodayView() {
     ? '첫 기록을 시작해 볼까요?'
     : `${daysBetween(last.date, today) === 1 ? '어제' : fmtDate(last.date)} ${last.type === 'strength' ? '근력' : '유산소'} → 오늘은 ${suggest === 'strength' ? '근력' : '유산소'} 차례예요`;
 
-  const doneToday = todays.length > 0;
+  const doneToday = todays.some((w) => w.type === 'cardio' || w.entries.some((e) => e.sets.some((s) => s.done)));
 
   const strengthBtn = html`
     <button class=${'big-btn strength ' + (suggest === 'strength' ? 'primary' : 'secondary')} onClick=${() => startStrength()}>

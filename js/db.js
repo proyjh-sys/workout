@@ -140,22 +140,34 @@ export async function getLastPerformance(exerciseId, excludeWorkoutId, beforeOrO
   return { date: done[0].date, workoutId: wid, sets: lastSets };
 }
 
-export async function addEntry(workout, exercise) {
+/**
+ * 운동 추가. opts(루틴에서 불러올 때): { targetSets, targetReps, routineId }
+ * 지난번 기록의 무게·횟수로 세트를 미리 채웁니다. 루틴이면 목표 세트 수만큼 만들어 둡니다.
+ */
+export async function addEntry(workout, exercise, opts = {}) {
   const t = nowIso();
   const existing = await db.entries.where('workoutId').equals(workout.id).toArray();
   const entry = {
     id: uuid(), workoutId: workout.id, exerciseId: exercise.id,
     order: existing.length ? Math.max(...existing.map((e) => e.order)) + 1 : 0,
-    note: '', createdAt: t, updatedAt: t,
+    note: '',
+    targetSets: opts.targetSets ?? null,
+    targetReps: opts.targetReps ?? null,
+    routineId: opts.routineId ?? null,
+    progression: null, // 증량 제안 선택: { status: 'accepted'|'ignored', toKg }
+    createdAt: t, updatedAt: t,
   };
   const last = await getLastPerformance(exercise.id, workout.id, workout.date);
-  const first = last?.sets[0];
+  const count = Math.max(1, opts.targetSets || 1);
   await db.transaction('rw', db.entries, db.sets, db.workouts, async () => {
     await db.entries.add(entry);
-    await db.sets.add(newSet(entry, workout, 0, {
-      weightKg: first ? first.weightKg : exercise.defaultWeightKg ?? 20,
-      reps: first ? first.reps : exercise.repUnit === 'sec' ? 30 : 10,
-    }));
+    for (let i = 0; i < count; i++) {
+      const base = last?.sets[i] ?? last?.sets[last.sets.length - 1];
+      await db.sets.add(newSet(entry, workout, i, {
+        weightKg: base ? base.weightKg : exercise.defaultWeightKg ?? 20,
+        reps: opts.targetReps ?? (base ? base.reps : exercise.repUnit === 'sec' ? 30 : 10),
+      }));
+    }
     await touchWorkout(workout.id);
   });
   return entry;

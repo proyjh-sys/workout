@@ -1,6 +1,8 @@
 // ④ 설정 탭 + 운동 목록 관리
 import { html, useState, useRef } from '../vendor/preact-htm.mjs';
-import { db, useLive, exerciseUsage, addExercise, updateExercise } from '../db.js';
+import { db, useLive, exerciseUsage, addExercise, updateExercise, getSetting, setSetting } from '../db.js';
+import { fmtClock } from '../timer.js';
+import { DEFAULT_TARGET_REPS } from '../progress.js';
 import { go, toast, confirmDialog, openSheet, closeSheet } from '../ui.js';
 import { TopBar, Stepper } from '../components.js';
 import { PartTabs, sortExercises } from './exercisePicker.js';
@@ -51,10 +53,14 @@ export function SettingsView() {
         <button class="list-item" onClick=${() => go({ name: 'exercises' })}>
           <span>운동 목록 관리</span><span class="chev">›</span>
         </button>
-        <div class="list-item disabled"><span>루틴 템플릿</span><span class="muted small">2단계에서 추가</span></div>
-        <div class="list-item disabled"><span>휴식 타이머</span><span class="muted small">2단계에서 추가</span></div>
+        <button class="list-item" onClick=${() => go({ name: 'routines' })}>
+          <span>루틴 템플릿</span><span class="chev">›</span>
+        </button>
         <div class="list-item disabled"><span>주간 목표</span><span class="muted small">3단계에서 추가</span></div>
       </div>
+
+      <h2 class="section-title">휴식 타이머</h2>
+      <${RestSettings} />
 
       <h2 class="section-title">데이터 보호</h2>
       <div class="card">
@@ -80,6 +86,31 @@ export function SettingsView() {
           <span class="muted small">${persisted === true ? '켜짐 ✓' : persisted === false ? '홈 화면 앱으로 쓰면 더 안전해요' : '-'}</span></div>
       </div>
       <p class="hint center">모든 기록은 이 아이폰 안에만 저장돼요.</p>
+    </div>`;
+}
+
+/* ---------- 휴식 타이머 설정 ---------- */
+function RestSettings() {
+  const v = useLive(async () => ({
+    sec: await getSetting('restSec', 90),
+    auto: await getSetting('restAuto', true),
+    sound: await getSetting('restSound', true),
+  }), []);
+  if (!v) return html`<div class="card"></div>`;
+  return html`
+    <div class="card">
+      <div class="field-label">휴식 시간</div>
+      <${Stepper} label="휴식 시간" value=${v.sec} step=${15} min=${15} decimal=${false} display=${fmtClock}
+        onChange=${(n) => setSetting('restSec', Math.max(15, Math.round(n)))} />
+      <div class="choice-grid toggles">
+        <button class=${'choice ' + (v.auto ? 'on' : '')} onClick=${() => setSetting('restAuto', !v.auto)}>
+          ${v.auto ? '✓ ' : ''}세트 완료 시 자동 시작
+        </button>
+        <button class=${'choice ' + (v.sound ? 'on' : '')} onClick=${() => setSetting('restSound', !v.sound)}>
+          ${v.sound ? '🔔 알림음 켜짐' : '🔕 알림음 꺼짐'}
+        </button>
+      </div>
+      <p class="hint">알림음은 앱 화면이 켜져 있을 때만 울려요. 무음 모드에서는 소리가 나지 않을 수 있어요.</p>
     </div>`;
 }
 
@@ -129,6 +160,7 @@ function ExerciseEditor({ ex, part }) {
     incrementKg: ex?.incrementKg ?? 2.5,
     repUnit: ex?.repUnit ?? 'reps',
     favorite: ex?.favorite ?? false,
+    targetReps: ex?.targetReps ?? DEFAULT_TARGET_REPS,
   });
   const up = (p) => setF({ ...f, ...p });
 
@@ -136,7 +168,10 @@ function ExerciseEditor({ ex, part }) {
     const name = f.name.trim();
     if (!name) return toast('이름을 입력하세요');
     if (ex) await updateExercise(ex.id, { ...f, name });
-    else await addExercise({ ...f, name }).then((n) => f.favorite && updateExercise(n.id, { favorite: true }));
+    else {
+      const n = await addExercise({ ...f, name });
+      await updateExercise(n.id, { favorite: f.favorite, targetReps: f.targetReps });
+    }
     closeSheet();
     toast('저장했어요');
   };
@@ -164,9 +199,13 @@ function ExerciseEditor({ ex, part }) {
       <div class="choice-grid three">
         ${PARTS.map((p) => html`<button class=${'choice ' + (f.part === p.id ? 'on' : '')} onClick=${() => up({ part: p.id })}>${p.label}</button>`)}
       </div>
-      <div class="field-label">증량 폭 (다음 단계의 증량 제안·무게 버튼 간격)</div>
+      <div class="field-label">증량 폭 (증량 제안·무게 +/- 버튼 간격)</div>
       <${Stepper} label="증량 폭" value=${f.incrementKg} step=${0.5} min=${0.5} unit="kg" display=${(v) => `${fmtNum(v)}kg`}
         onChange=${(v) => up({ incrementKg: Math.max(0.5, v) })} />
+      ${f.repUnit === 'reps' && html`
+        <div class="field-label">기본 목표 횟수 (루틴 없이 할 때 증량 제안 기준)</div>
+        <${Stepper} label="기본 목표 횟수" value=${f.targetReps} step=${1} min=${1} decimal=${false} display=${(v) => `${v}회`}
+          onChange=${(v) => up({ targetReps: Math.max(1, Math.round(v)) })} />`}
       <div class="field-label">기록 방식</div>
       <div class="choice-grid">
         <button class=${'choice ' + (f.repUnit === 'reps' ? 'on' : '')} onClick=${() => up({ repUnit: 'reps' })}>횟수(회)</button>

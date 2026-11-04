@@ -4,6 +4,7 @@ import { db, useLive, useExercises, loadWorkoutDetails, deleteWorkout, isEmptyWo
 import { confirmDialog, toast } from '../ui.js';
 import { WorkoutSummary } from '../components.js';
 import { startStrength, startCardio, openWorkout } from './today.js';
+import { saveWorkoutAsRoutine } from './routines.js';
 import { todayStr, toDateStr, fmtDate } from '../util.js';
 
 const WEEK = ['월', '화', '수', '목', '금', '토', '일'];
@@ -101,6 +102,7 @@ function DayDetail({ date }) {
     ${list?.map((w) => html`
       <${WorkoutSummary} key=${w.id} w=${w} exMap=${exMap}>
         <div class="wc-actions">
+          ${w.type === 'strength' && html`<button class="btn small" onClick=${() => saveWorkoutAsRoutine(w.id)}>루틴으로 저장</button>`}
           <button class="btn small" onClick=${() => openWorkout(w)}>수정</button>
           <button class="btn small danger-ghost" onClick=${() => remove(w)}>삭제</button>
         </div>

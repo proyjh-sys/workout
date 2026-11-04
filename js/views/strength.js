@@ -2,11 +2,14 @@
 import { html, useState } from '../vendor/preact-htm.mjs';
 import {
   db, useLive, useExercises, addEntry, addSet, updateSet, deleteSet, updateEntry, deleteEntry,
-  getLastPerformance, touchWorkout, deleteWorkout,
+  getLastPerformance, touchWorkout, deleteWorkout, getSetting,
 } from '../db.js';
 import { back, openSheet, confirmDialog, toast, useWakeLock } from '../ui.js';
-import { Stepper, TopBar, setText, repUnitLabel } from '../components.js';
+import { Stepper, TopBar, repUnitLabel } from '../components.js';
 import { ExercisePicker } from './exercisePicker.js';
+import { RoutinePickerSheet, saveWorkoutAsRoutine } from './routines.js';
+import { RestBar, startRest, unlockAudio } from '../timer.js';
+import { progressionFor, checkPR } from '../progress.js';
 import { INTENSITY, fmtDate, fmtShort, fmtWeight, fmtNum, rpeLabel, partLabel, nowIso, vibrate, todayStr } from '../util.js';
 
 export function StrengthView({ workoutId }) {
@@ -23,6 +26,7 @@ export function StrengthView({ workoutId }) {
   if (!data) return html`<div class="page"></div>`;
   const { workout, entries, sets } = data;
   if (!workout) return html`<div class="page"><${TopBar} title="근력 운동" /><div class="empty">기록을 찾을 수 없어요</div></div>`;
+  const doneCount = sets.filter((s) => s.done).length;
 
   const close = async () => {
     // 아무 운동도 추가하지 않았다면 빈 기록은 남기지 않음
@@ -31,7 +35,6 @@ export function StrengthView({ workoutId }) {
   };
 
   const finish = async () => {
-    const doneCount = sets.filter((s) => s.done).length;
     if (doneCount === 0) {
       const ok = await confirmDialog({
         title: '완료한 세트가 없어요',
@@ -44,6 +47,8 @@ export function StrengthView({ workoutId }) {
     }
     // 끝내지 않은(완료 안 한) 세트는 정리
     for (const s of sets.filter((s) => !s.done)) await deleteSet(s.id);
+    // 세트가 하나도 남지 않은 운동 항목도 정리
+    for (const e of entries) if (!sets.some((s) => s.entryId === e.id && s.done)) await deleteEntry(e.id);
     await touchWorkout(workout.id, { endedAt: nowIso() });
     toast(`수고했어요! ${doneCount}세트를 저장했어요 💪`);
     back();
@@ -55,13 +60,17 @@ export function StrengthView({ workoutId }) {
       initialPart=${lastPart || 'chest'}
       alreadyIds=${entries.map((e) => e.exerciseId)}
       onPick=${(ex) => addEntry(workout, ex)} />`);
+  const pickRoutine = () => openSheet(() => html`<${RoutinePickerSheet} workout=${workout} />`);
 
   return html`
-    <div class="page has-topbar">
-      <${TopBar} title="근력 운동" sub=${workout.date === todayStr() ? '오늘' : fmtDate(workout.date)} onBack=${close} backLabel="‹ 닫기" />
+    <div class="page has-topbar with-restbar">
+      <${TopBar} title=${workout.routineName || '근력 운동'} sub=${workout.date === todayStr() ? '오늘' : fmtDate(workout.date)}
+        onBack=${close} backLabel="‹ 닫기"
+        right=${entries.length > 0 && html`<button class="topbar-back" onClick=${pickRoutine}>루틴</button>`} />
 
       ${entries.length === 0 && html`
-        <div class="empty">운동을 추가해서 시작하세요.<br/>기록은 누를 때마다 자동 저장돼요.</div>`}
+        <div class="empty">운동을 추가하거나 루틴을 불러와 시작하세요.<br/>기록은 누를 때마다 자동 저장돼요.</div>
+        <button class="big-btn primary" onClick=${pickRoutine}>📋 루틴 불러오기</button>`}
 
       ${entries.map((e) => html`
         <${EntryCard} key=${e.id} entry=${e} ex=${exMap[e.exerciseId]} workout=${workout}
@@ -69,17 +78,22 @@ export function StrengthView({ workoutId }) {
 
       <button class="big-btn secondary add-ex" onClick=${pickExercise}>+ 운동 추가</button>
       ${entries.length > 0 && html`<button class="big-btn primary finish" onClick=${finish}>운동 마치기</button>`}
-    </div>`;
+      ${doneCount > 0 && html`<button class="btn ghost full" onClick=${() => saveWorkoutAsRoutine(workout.id)}>📋 오늘 운동을 새 루틴으로 저장</button>`}
+    </div>
+    <${RestBar} />`;
 }
 
 function EntryCard({ entry, ex, sets, workout }) {
   const [editingId, setEditingId] = useState(null);
   const [showNote, setShowNote] = useState(!!entry.note);
   const last = useLive(() => getLastPerformance(entry.exerciseId, workout.id, workout.date), [entry.exerciseId, workout.id, workout.date]);
+  const sugg = useLive(() => progressionFor(entry, ex, workout),
+    [entry.id, entry.targetReps, ex?.id, ex?.incrementKg, ex?.targetReps, workout.id]);
 
   const firstPending = sets.find((s) => !s.done);
   const activeId = editingId ?? firstPending?.id;
   const unit = repUnitLabel(ex);
+  const doneN = sets.filter((s) => s.done).length;
 
   const removeEntry = async () => {
     const ok = await confirmDialog({ title: `${ex?.name ?? '운동'} 삭제`, message: '이 운동의 오늘 세트가 모두 지워져요.', okText: '삭제', danger: true });
@@ -92,6 +106,14 @@ function EntryCard({ entry, ex, sets, workout }) {
     await addSet(entry, workout);
   };
 
+  const accept = async () => {
+    vibrate();
+    for (const s of sets.filter((s) => !s.done && s.weightKg < sugg.toKg)) await updateSet(s.id, { weightKg: sugg.toKg });
+    await updateEntry(entry.id, { progression: { status: 'accepted', toKg: sugg.toKg } });
+  };
+  const ignore = () => updateEntry(entry.id, { progression: { status: 'ignored', toKg: sugg.toKg } });
+  const showSugg = sugg && !entry.progression && firstPending;
+
   return html`
     <section class="card entry">
       <div class="entry-head">
@@ -102,9 +124,21 @@ function EntryCard({ entry, ex, sets, workout }) {
               ? html`지난번 ${fmtShort(last.date)} · ${last.sets.map((s) => `${fmtWeight(s.weightKg)}×${fmtNum(s.reps)}`).join(', ')}`
               : html`<span class="muted">${ex ? partLabel(ex.part) + ' · ' : ''}첫 기록이에요</span>`}
           </div>
+          ${entry.targetSets && html`
+            <div class="entry-target">목표 ${entry.targetSets}세트 × ${entry.targetReps}${unit} · <b>${doneN}/${entry.targetSets}</b></div>`}
         </div>
         <button class="icon-btn" aria-label="운동 삭제" onClick=${removeEntry}>🗑</button>
       </div>
+
+      ${showSugg && html`
+        <div class="suggest-box">
+          <div class="sb-text">💡 지난번 모든 세트 ${sugg.target}${unit} 달성! 오늘 <b>${fmtNum(sugg.toKg)}kg</b> 해볼까요?</div>
+          <div class="sb-actions">
+            <button class="btn primary small" onClick=${accept}>수락</button>
+            <button class="btn small" onClick=${ignore}>무시</button>
+          </div>
+        </div>`}
+      ${entry.progression?.status === 'accepted' && html`<div class="sb-done">⬆ 증량 적용: ${fmtNum(entry.progression.toKg)}kg</div>`}
 
       <div class="sets">
         ${sets.map((s, i) =>
@@ -132,10 +166,15 @@ function SetEditor({ s, index, ex, onClose, canClose }) {
   const step = ex?.incrementKg || 2.5;
   const isSec = ex?.repUnit === 'sec';
 
-  const complete = (rpe) => {
+  const complete = async (rpe) => {
     vibrate();
-    updateSet(s.id, { rpe, done: true, completedAt: s.completedAt || nowIso() });
+    unlockAudio(); // 휴식 끝 알림음을 위해 지금 소리 사용을 허락받아 둠
+    const wasDone = s.done;
+    await updateSet(s.id, { rpe, done: true, completedAt: s.completedAt || nowIso() });
     onClose();
+    if (!wasDone && (await getSetting('restAuto', true))) startRest(await getSetting('restSec', 90));
+    const pr = await checkPR({ ...s, rpe, done: true }, ex);
+    if (pr) toast(`🏆 새 개인 최고 기록! ${pr.kind} · ${pr.text}`, { duration: 4500 });
   };
   const remove = async () => {
     await deleteSet(s.id);
